@@ -53,7 +53,7 @@
       padding: 8px 12px;
       font-size: 13px;
       font-weight: 600;
-      max-width: 340px;
+      max-width: 360px;
       cursor: pointer;
     }
     select.job-select:focus { outline: 1px solid var(--blue); }
@@ -105,8 +105,24 @@
       flex-wrap: wrap;
       gap: 8px;
     }
+    .table-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .btn-small {
+      background: #21262d;
+      color: var(--blue);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-small:hover { background: #30363d; }
     .table-scroll-box {
-      max-height: 420px;
+      max-height: 440px;
       overflow-y: auto;
       overflow-x: auto;
       border: 1px solid var(--border);
@@ -143,7 +159,7 @@
       </div>
       <div class="header-controls">
         <select id="job-selector" class="job-select" title="Select Print Job (.3mf)">
-          <option value="__LIVE__">Loading print jobs...</option>
+          <option value="__LIVE__">Scanning print history...</option>
         </select>
         <div id="state-badge" class="badge">LOADING...</div>
       </div>
@@ -190,7 +206,10 @@
     <div class="card">
       <div class="table-header-row">
         <div class="card-label" style="margin-bottom: 0;">Print Event Log (Scrollable)</div>
-        <span id="event-count-label" style="font-size: 12px; color: var(--muted);">0 events loaded</span>
+        <div class="table-actions">
+          <span id="event-count-label" style="font-size: 12px; color: var(--muted);">0 events loaded</span>
+          <button id="show-all-btn" class="btn-small" style="display: none;">Show All Rows</button>
+        </div>
       </div>
       <div class="table-scroll-box">
         <table>
@@ -223,8 +242,8 @@
       data: {
         labels: [],
         datasets: [
-          { label: "Nozzle (°C)", data: [], borderColor: "#ff5252", backgroundColor: "rgba(255,82,82,0.1)", tension: 0.3, borderWidth: 2, pointRadius: 2 },
-          { label: "Bed (°C)", data: [], borderColor: "#29b6f6", backgroundColor: "rgba(41,182,246,0.1)", tension: 0.3, borderWidth: 2, pointRadius: 2 }
+          { label: "Nozzle (°C)", data: [], borderColor: "#ff5252", backgroundColor: "rgba(255,82,82,0.1)", tension: 0.3, borderWidth: 2, pointRadius: 1.5 },
+          { label: "Bed (°C)", data: [], borderColor: "#29b6f6", backgroundColor: "rgba(41,182,246,0.1)", tension: 0.3, borderWidth: 2, pointRadius: 1.5 }
         ]
       },
       options: {
@@ -241,6 +260,8 @@
     let activeJobName = "";
     let selectedJobName = "__LIVE__";
     let currentRows = [];
+    let renderAllTableRows = false;
+    const INITIAL_TABLE_CAP = 500; // Keeps 72-hr (75,000+ row) prints super snappy
 
     function renderLatestCard(row, isHistorical = false) {
       if (!row) return;
@@ -272,14 +293,27 @@
       document.getElementById("wifi-val").textContent = `Fan: ${fanPct}% • Wi-Fi: ${row.wifi_signal ?? "--"}`;
     }
 
-    function renderTableAndChart(rows) {
+    function renderTable(rows) {
       const tbody = document.getElementById("log-table-body");
-      tbody.innerHTML = "";
-      document.getElementById("event-count-label").textContent = `${rows.length} events for this print`;
+      const showAllBtn = document.getElementById("show-all-btn");
+      const countLabel = document.getElementById("event-count-label");
 
-      rows.forEach(r => {
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
+      const visibleRows = renderAllTableRows ? rows : rows.slice(0, INITIAL_TABLE_CAP);
+
+      if (!renderAllTableRows && rows.length > INITIAL_TABLE_CAP) {
+        countLabel.textContent = `Showing latest ${INITIAL_TABLE_CAP.toLocaleString()} of ${rows.length.toLocaleString()} events`;
+        showAllBtn.style.display = "inline-block";
+        showAllBtn.textContent = `Load All ${rows.length.toLocaleString()} Rows`;
+      } else {
+        countLabel.textContent = `${rows.length.toLocaleString()} total events for this print`;
+        showAllBtn.style.display = "none";
+      }
+
+      // Build HTML string in one batch for instant rendering even on 75,000+ rows
+      const htmlChunks = new Array(visibleRows.length);
+      for (let i = 0; i < visibleRows.length; i++) {
+        const r = visibleRows[i];
+        htmlChunks[i] = `<tr>
           <td>${r.timestamp}</td>
           <td><span class="pill">${r.trigger}</span></td>
           <td><b>${r.gcode_state}</b></td>
@@ -288,13 +322,16 @@
           <td>${Number(r.nozzle_temper).toFixed(1)}°C</td>
           <td>${Number(r.bed_temper).toFixed(1)}°C</td>
           <td>${r.print_error === 0 ? "OK" : r.print_error}</td>
-        `;
-        tbody.appendChild(tr);
-      });
+        </tr>`;
+      }
+      tbody.innerHTML = htmlChunks.join("");
+    }
 
-      // Downsample chart points slightly if > 150 rows so chart stays super smooth
+    function renderChart(rows) {
+      // Smartly downsample to ~200 points so 72-hour prints (75,000+ rows) render smoothly
       const chronological = [...rows].reverse();
-      const step = chronological.length > 150 ? Math.ceil(chronological.length / 150) : 1;
+      const maxChartPoints = 200;
+      const step = chronological.length > maxChartPoints ? Math.ceil(chronological.length / maxChartPoints) : 1;
       const chartData = chronological.filter((_, idx) => idx % step === 0);
 
       tempChart.data.labels = chartData.map(r => r.timestamp.split(" ")[1] || r.timestamp);
@@ -303,27 +340,47 @@
       tempChart.update("none");
     }
 
-    // Build dropdown list of unique .3mf print jobs from recent history
+    // Fast job discovery: jumps directly to the start of each .3mf print instead of downloading 75,000 rows
     async function populateJobDropdown(latestSubtask) {
-      const { data, error } = await db
-        .from("printer_logs")
-        .select("subtask_name, gcode_state, timestamp, unix_epoch")
-        .neq("subtask_name", "NONE")
-        .order("unix_epoch", { ascending: false })
-        .limit(3000);
-
-      if (error || !data) return;
-
       const jobMap = new Map();
-      for (const row of data) {
-        if (!row.subtask_name) continue;
-        if (!jobMap.has(row.subtask_name)) {
-          jobMap.set(row.subtask_name, {
-            name: row.subtask_name,
-            lastState: row.gcode_state,
-            lastTime: row.timestamp
+      let beforeEpoch = Math.floor(Date.now() / 1000) + 86400;
+
+      // Supports discovering up to 100 distinct print jobs regardless of how many days each took
+      for (let step = 0; step < 100; step++) {
+        // 1. Grab the single most recent row before `beforeEpoch`
+        const { data: latestRowData, error: latestErr } = await db
+          .from("printer_logs")
+          .select("subtask_name, gcode_state, timestamp, unix_epoch")
+          .neq("subtask_name", "NONE")
+          .lt("unix_epoch", beforeEpoch)
+          .order("unix_epoch", { ascending: false })
+          .limit(1);
+
+        if (latestErr || !latestRowData || latestRowData.length === 0) break;
+
+        const job = latestRowData[0];
+        if (!jobMap.has(job.subtask_name)) {
+          jobMap.set(job.subtask_name, {
+            name: job.subtask_name,
+            lastState: job.gcode_state,
+            lastTime: job.timestamp
           });
         }
+
+        // 2. Find the earliest timestamp of this specific print job so we can jump straight past it
+        const { data: firstRowData, error: firstErr } = await db
+          .from("printer_logs")
+          .select("unix_epoch")
+          .eq("subtask_name", job.subtask_name)
+          .lt("unix_epoch", beforeEpoch)
+          .order("unix_epoch", { ascending: true })
+          .limit(1);
+
+        if (firstErr || !firstRowData || firstRowData.length === 0) break;
+        const earliestEpochForThisJob = firstRowData[0].unix_epoch;
+
+        if (earliestEpochForThisJob >= beforeEpoch) break;
+        beforeEpoch = earliestEpochForThisJob;
       }
 
       const selector = document.getElementById("job-selector");
@@ -348,33 +405,57 @@
       }
     }
 
-    // Load all rows for a specific .3mf task name (or the current live task)
+    // Automatically pages through Supabase in 1,000-row chunks (supports 72+ hour prints / 100,000 rows)
     async function loadJobLogs(targetSubtask, isHistorical) {
-      let query = db
-        .from("printer_logs")
-        .select("*")
-        .order("unix_epoch", { ascending: false })
-        .limit(2000);
+      renderAllTableRows = false;
+      document.getElementById("event-count-label").textContent = "Loading full print history...";
 
-      if (targetSubtask && targetSubtask !== "NONE") {
-        query = query.eq("subtask_name", targetSubtask);
+      let allFetched = [];
+      const pageSize = 1000;
+      const maxPages = 100; // Up to 100,000 rows (~100 hours at 1,000 rows/hr)
+
+      for (let page = 0; page < maxPages; page++) {
+        const from = page * pageSize;
+        const to = from + pageSize - 1;
+
+        let query = db
+          .from("printer_logs")
+          .select("*")
+          .order("unix_epoch", { ascending: false })
+          .range(from, to);
+
+        if (targetSubtask && targetSubtask !== "NONE") {
+          query = query.eq("subtask_name", targetSubtask);
+        }
+
+        const { data, error } = await query;
+        if (error) {
+          document.getElementById("last-updated").textContent = "Error loading data: " + error.message;
+          break;
+        }
+
+        if (!data || data.length === 0) break;
+        allFetched = allFetched.concat(data);
+
+        // Update screen immediately after first 1,000 rows so UI feels instantaneous
+        if (page === 0) {
+          renderLatestCard(allFetched[0], isHistorical);
+          renderTable(allFetched);
+          renderChart(allFetched);
+        }
+
+        if (data.length < pageSize) break;
       }
 
-      const { data, error } = await query;
-      if (error) {
-        document.getElementById("last-updated").textContent = "Error loading data: " + error.message;
-        return;
-      }
-
-      if (data && data.length > 0) {
-        currentRows = data;
+      if (allFetched.length > 0) {
+        currentRows = allFetched;
         renderLatestCard(currentRows[0], isHistorical);
-        renderTableAndChart(currentRows);
+        renderTable(currentRows);
+        renderChart(currentRows);
       }
     }
 
     async function initializeDashboard() {
-      // 1. Find the very latest row to identify the active print job
       const { data: latestData, error } = await db
         .from("printer_logs")
         .select("*")
@@ -395,7 +476,11 @@
       }
     }
 
-    // Handle dropdown change between LIVE and past .3mf prints
+    document.getElementById("show-all-btn").addEventListener("click", () => {
+      renderAllTableRows = true;
+      renderTable(currentRows);
+    });
+
     document.getElementById("job-selector").addEventListener("change", async (e) => {
       selectedJobName = e.target.value;
       if (selectedJobName === "__LIVE__") {
@@ -410,7 +495,6 @@
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "printer_logs" }, async (payload) => {
         const newRow = payload.new;
 
-        // If a brand new .3mf print starts, refresh the dropdown list
         if (newRow.subtask_name && newRow.subtask_name !== activeJobName) {
           activeJobName = newRow.subtask_name;
           await populateJobDropdown(activeJobName);
@@ -420,11 +504,11 @@
           }
         }
 
-        // Append live rows only when viewing LIVE (or viewing the matching active .3mf job)
         if (selectedJobName === "__LIVE__" || selectedJobName === newRow.subtask_name) {
           currentRows.unshift(newRow);
           renderLatestCard(newRow, selectedJobName !== "__LIVE__");
-          renderTableAndChart(currentRows);
+          renderTable(currentRows);
+          renderChart(currentRows);
         }
       })
       .subscribe();
