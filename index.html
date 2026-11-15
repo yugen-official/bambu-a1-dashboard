@@ -6,6 +6,8 @@
   <title>Bambu Lab A1 — Live & Historical Telemetry</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
   <style>
     :root {
       --bg: #0d1117;
@@ -94,7 +96,62 @@
     .progress-track { width: 100%; height: 14px; background: #21262d; border-radius: 999px; overflow: hidden; }
     .progress-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #00c853, #00e676); transition: width 0.4s ease; }
 
-    .chart-card { margin-bottom: 20px; height: 280px; }
+    /* Chart Card with Scaling Controls & Clean Bottom Margin */
+    .chart-card {
+      margin-bottom: 20px;
+      padding-bottom: 20px;
+    }
+    .chart-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .scale-controls {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+    }
+    .scale-group-label {
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      font-weight: 600;
+      margin-left: 6px;
+      margin-right: 2px;
+    }
+    .scale-btn {
+      background: #21262d;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 9px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .scale-btn:hover { background: #30363d; }
+    .scale-btn.active {
+      background: rgba(41, 182, 246, 0.2);
+      color: var(--blue);
+      border-color: var(--blue);
+    }
+    .chart-wrapper {
+      position: relative;
+      width: 100%;
+      height: 310px;
+      cursor: crosshair;
+    }
+    .chart-hint {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 8px;
+      text-align: right;
+    }
 
     /* Scrollable Event Table with Sticky Header */
     .table-header-row {
@@ -199,8 +256,28 @@
     </div>
 
     <div class="card chart-card">
-      <div class="card-label" style="margin-bottom: 10px;">Temperature History (°C)</div>
-      <canvas id="tempChart"></canvas>
+      <div class="chart-toolbar">
+        <div class="card-label" style="margin-bottom: 0;">Temperature History (°C)</div>
+        <div class="scale-controls">
+          <span class="scale-group-label">X-Time:</span>
+          <button class="scale-btn x-btn active" data-xrange="all">All</button>
+          <button class="scale-btn x-btn" data-xrange="21600">6h</button>
+          <button class="scale-btn x-btn" data-xrange="3600">1h</button>
+          <button class="scale-btn x-btn" data-xrange="900">15m</button>
+
+          <span class="scale-group-label">Y-Temp:</span>
+          <button class="scale-btn y-btn active" data-ymin="auto" data-ymax="auto">Auto</button>
+          <button class="scale-btn y-btn" data-ymin="0" data-ymax="300">0–300°</button>
+          <button class="scale-btn y-btn" data-ymin="180" data-ymax="260">Nozzle</button>
+          <button class="scale-btn y-btn" data-ymin="20" data-ymax="110">Bed</button>
+
+          <button class="scale-btn" id="reset-zoom-btn" style="color: var(--amber); margin-left: 6px;">Reset View</button>
+        </div>
+      </div>
+      <div class="chart-wrapper">
+        <canvas id="tempChart"></canvas>
+      </div>
+      <div class="chart-hint">Scroll wheel to zoom X-axis • Drag left/right to pan through print timeline • Hover for crosshair pointer</div>
     </div>
 
     <div class="card">
@@ -236,32 +313,120 @@
     const SUPABASE_KEY = "sb_publishable_1tuDdE0EIPisl-XgsQno5g_olhE8B8J";
     const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
+    // Custom Crosshair Pointer Plugin for crisp vertical tracking line
+    const crosshairPlugin = {
+      id: "crosshairPointer",
+      afterDatasetsDraw(chart) {
+        const { ctx, tooltip, chartArea } = chart;
+        if (!tooltip || !tooltip._active || tooltip._active.length === 0) return;
+
+        const x = tooltip._active[0].element.x;
+        if (x < chartArea.left || x > chartArea.right) return;
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.setLineDash([4, 4]);
+        ctx.lineWidth = 1.2;
+        ctx.strokeStyle = "rgba(230, 237, 243, 0.55)";
+        ctx.moveTo(x, chartArea.top);
+        ctx.lineTo(x, chartArea.bottom);
+        ctx.stroke();
+        ctx.restore();
+      }
+    };
+
     const ctx = document.getElementById("tempChart").getContext("2d");
     const tempChart = new Chart(ctx, {
       type: "line",
       data: {
         labels: [],
         datasets: [
-          { label: "Nozzle (°C)", data: [], borderColor: "#ff5252", backgroundColor: "rgba(255,82,82,0.1)", tension: 0.3, borderWidth: 2, pointRadius: 1.5 },
-          { label: "Bed (°C)", data: [], borderColor: "#29b6f6", backgroundColor: "rgba(41,182,246,0.1)", tension: 0.3, borderWidth: 2, pointRadius: 1.5 }
+          {
+            label: "Nozzle (°C)",
+            data: [],
+            borderColor: "#ff5252",
+            backgroundColor: "rgba(255,82,82,0.1)",
+            tension: 0.25,
+            borderWidth: 2,
+            pointRadius: 1.5,
+            pointHoverRadius: 5,
+            pointHoverBackgroundColor: "#ff5252"
+          },
+          {
+            label: "Bed (°C)",
+            data: [],
+            borderColor: "#29b6f6",
+            backgroundColor: "rgba(41,182,246,0.1)",
+            tension: 0.25,
+            borderWidth: 2,
+            pointRadius: 1.5,
+            pointHoverRadius: 5,
+            pointHoverBackgroundColor: "#29b6f6"
+          }
         ]
       },
+      plugins: [crosshairPlugin],
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        scales: {
-          x: { ticks: { color: "#8b949e", maxTicksLimit: 10 }, grid: { color: "#21262d" } },
-          y: { ticks: { color: "#8b949e" }, grid: { color: "#21262d" } }
+        layout: {
+          padding: { top: 4, right: 12, bottom: 10, left: 4 }
         },
-        plugins: { legend: { labels: { color: "#e6edf3" } } }
+        interaction: {
+          mode: "index",
+          intersect: false
+        },
+        scales: {
+          x: {
+            ticks: {
+              color: "#8b949e",
+              maxTicksLimit: 10,
+              maxRotation: 0,
+              padding: 8
+            },
+            grid: { color: "#21262d" }
+          },
+          y: {
+            ticks: {
+              color: "#8b949e",
+              padding: 8
+            },
+            grid: { color: "#21262d" }
+          }
+        },
+        plugins: {
+          legend: {
+            labels: { color: "#e6edf3", boxWidth: 14, padding: 14 }
+          },
+          tooltip: {
+            backgroundColor: "rgba(22, 27, 34, 0.95)",
+            borderColor: "#30363d",
+            borderWidth: 1,
+            titleColor: "#e6edf3",
+            bodyColor: "#e6edf3",
+            padding: 10
+          },
+          zoom: {
+            pan: {
+              enabled: true,
+              mode: "x"
+            },
+            zoom: {
+              wheel: { enabled: true },
+              pinch: { enabled: true },
+              mode: "x"
+            }
+          }
+        }
       }
     });
 
     let activeJobName = "";
     let selectedJobName = "__LIVE__";
     let currentRows = [];
+    let chartChronologicalRows = [];
     let renderAllTableRows = false;
-    const INITIAL_TABLE_CAP = 500; // Keeps 72-hr (75,000+ row) prints super snappy
+    const INITIAL_TABLE_CAP = 500;
 
     function renderLatestCard(row, isHistorical = false) {
       if (!row) return;
@@ -309,7 +474,6 @@
         showAllBtn.style.display = "none";
       }
 
-      // Build HTML string in one batch for instant rendering even on 75,000+ rows
       const htmlChunks = new Array(visibleRows.length);
       for (let i = 0; i < visibleRows.length; i++) {
         const r = visibleRows[i];
@@ -327,27 +491,64 @@
       tbody.innerHTML = htmlChunks.join("");
     }
 
-    function renderChart(rows) {
-      // Smartly downsample to ~200 points so 72-hour prints (75,000+ rows) render smoothly
+    function renderChart(rows, preserveZoom = false) {
       const chronological = [...rows].reverse();
-      const maxChartPoints = 200;
+      // Keep up to 600 points so zooming in on long prints preserves sharp detail
+      const maxChartPoints = 600;
       const step = chronological.length > maxChartPoints ? Math.ceil(chronological.length / maxChartPoints) : 1;
-      const chartData = chronological.filter((_, idx) => idx % step === 0);
+      chartChronologicalRows = chronological.filter((_, idx) => idx % step === 0);
 
-      tempChart.data.labels = chartData.map(r => r.timestamp.split(" ")[1] || r.timestamp);
-      tempChart.data.datasets[0].data = chartData.map(r => r.nozzle_temper);
-      tempChart.data.datasets[1].data = chartData.map(r => r.bed_temper);
+      tempChart.data.labels = chartChronologicalRows.map(r => r.timestamp.split(" ")[1] || r.timestamp);
+      tempChart.data.datasets[0].data = chartChronologicalRows.map(r => r.nozzle_temper);
+      tempChart.data.datasets[1].data = chartChronologicalRows.map(r => r.bed_temper);
+
+      if (!preserveZoom) {
+        tempChart.resetZoom("none");
+      }
       tempChart.update("none");
     }
 
-    // Fast job discovery: jumps directly to the start of each .3mf print instead of downloading 75,000 rows
+    // Apply X-axis time window preset (All, 6h, 1h, 15m)
+    function applyXWindow(secondsWindow) {
+      if (chartChronologicalRows.length === 0) return;
+
+      if (secondsWindow === "all") {
+        delete tempChart.options.scales.x.min;
+        delete tempChart.options.scales.x.max;
+        tempChart.resetZoom("none");
+        tempChart.update("none");
+        return;
+      }
+
+      const span = Number(secondsWindow);
+      const latestEpoch = chartChronologicalRows[chartChronologicalRows.length - 1].unix_epoch;
+      const cutoffEpoch = latestEpoch - span;
+
+      let startIndex = chartChronologicalRows.findIndex(r => r.unix_epoch >= cutoffEpoch);
+      if (startIndex < 0) startIndex = 0;
+
+      tempChart.options.scales.x.min = startIndex;
+      tempChart.options.scales.x.max = chartChronologicalRows.length - 1;
+      tempChart.update("none");
+    }
+
+    // Apply Y-axis temperature range preset (Auto, 0-300, Nozzle, Bed)
+    function applyYRange(minVal, maxVal) {
+      if (minVal === "auto" || maxVal === "auto") {
+        delete tempChart.options.scales.y.min;
+        delete tempChart.options.scales.y.max;
+      } else {
+        tempChart.options.scales.y.min = Number(minVal);
+        tempChart.options.scales.y.max = Number(maxVal);
+      }
+      tempChart.update("none");
+    }
+
     async function populateJobDropdown(latestSubtask) {
       const jobMap = new Map();
       let beforeEpoch = Math.floor(Date.now() / 1000) + 86400;
 
-      // Supports discovering up to 100 distinct print jobs regardless of how many days each took
       for (let step = 0; step < 100; step++) {
-        // 1. Grab the single most recent row before `beforeEpoch`
         const { data: latestRowData, error: latestErr } = await db
           .from("printer_logs")
           .select("subtask_name, gcode_state, timestamp, unix_epoch")
@@ -367,7 +568,6 @@
           });
         }
 
-        // 2. Find the earliest timestamp of this specific print job so we can jump straight past it
         const { data: firstRowData, error: firstErr } = await db
           .from("printer_logs")
           .select("unix_epoch")
@@ -405,14 +605,13 @@
       }
     }
 
-    // Automatically pages through Supabase in 1,000-row chunks (supports 72+ hour prints / 100,000 rows)
     async function loadJobLogs(targetSubtask, isHistorical) {
       renderAllTableRows = false;
       document.getElementById("event-count-label").textContent = "Loading full print history...";
 
       let allFetched = [];
       const pageSize = 1000;
-      const maxPages = 100; // Up to 100,000 rows (~100 hours at 1,000 rows/hr)
+      const maxPages = 100;
 
       for (let page = 0; page < maxPages; page++) {
         const from = page * pageSize;
@@ -437,11 +636,10 @@
         if (!data || data.length === 0) break;
         allFetched = allFetched.concat(data);
 
-        // Update screen immediately after first 1,000 rows so UI feels instantaneous
         if (page === 0) {
           renderLatestCard(allFetched[0], isHistorical);
           renderTable(allFetched);
-          renderChart(allFetched);
+          renderChart(allFetched, false);
         }
 
         if (data.length < pageSize) break;
@@ -451,7 +649,7 @@
         currentRows = allFetched;
         renderLatestCard(currentRows[0], isHistorical);
         renderTable(currentRows);
-        renderChart(currentRows);
+        renderChart(currentRows, false);
       }
     }
 
@@ -475,6 +673,39 @@
         document.getElementById("last-updated").textContent = "Connected to Supabase • Waiting for first ESP32 log...";
       }
     }
+
+    // X-Time Scale Preset Buttons
+    document.querySelectorAll(".x-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".x-btn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        applyXWindow(btn.dataset.xrange);
+      });
+    });
+
+    // Y-Temp Scale Preset Buttons
+    document.querySelectorAll(".y-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".y-btn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        applyYRange(btn.dataset.ymin, btn.dataset.ymax);
+      });
+    });
+
+    // Reset Zoom & Pan Button
+    document.getElementById("reset-zoom-btn").addEventListener("click", () => {
+      document.querySelectorAll(".x-btn").forEach(b => b.classList.remove("active"));
+      document.querySelector('.x-btn[data-xrange="all"]').classList.add("active");
+      document.querySelectorAll(".y-btn").forEach(b => b.classList.remove("active"));
+      document.querySelector('.y-btn[data-ymin="auto"]').classList.add("active");
+
+      delete tempChart.options.scales.x.min;
+      delete tempChart.options.scales.x.max;
+      delete tempChart.options.scales.y.min;
+      delete tempChart.options.scales.y.max;
+      tempChart.resetZoom("none");
+      tempChart.update("none");
+    });
 
     document.getElementById("show-all-btn").addEventListener("click", () => {
       renderAllTableRows = true;
@@ -508,7 +739,9 @@
           currentRows.unshift(newRow);
           renderLatestCard(newRow, selectedJobName !== "__LIVE__");
           renderTable(currentRows);
-          renderChart(currentRows);
+          // Preserve user's current zoom/pan position during live updates
+          const isZoomed = tempChart.isZoomedOrPanned && tempChart.isZoomedOrPanned();
+          renderChart(currentRows, isZoomed);
         }
       })
       .subscribe();
