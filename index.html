@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Bambu Lab A1 — Live Telemetry Dashboard</title>
+  <title>Bambu Lab A1 — Live & Historical Telemetry</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <style>
@@ -39,6 +39,24 @@
     }
     .title-group h1 { font-size: 22px; font-weight: 700; }
     .title-group p { font-size: 13px; color: var(--muted); }
+    .header-controls {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+    }
+    select.job-select {
+      background: #161b22;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      max-width: 340px;
+      cursor: pointer;
+    }
+    select.job-select:focus { outline: 1px solid var(--blue); }
     .badge {
       padding: 8px 16px;
       border-radius: 999px;
@@ -77,10 +95,41 @@
     .progress-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #00c853, #00e676); transition: width 0.4s ease; }
 
     .chart-card { margin-bottom: 20px; height: 280px; }
-    .table-card { overflow-x: auto; }
+
+    /* Scrollable Event Table with Sticky Header */
+    .table-header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .table-scroll-box {
+      max-height: 420px;
+      overflow-y: auto;
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .table-scroll-box::-webkit-scrollbar { width: 8px; height: 8px; }
+    .table-scroll-box::-webkit-scrollbar-track { background: #0d1117; }
+    .table-scroll-box::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
+    .table-scroll-box::-webkit-scrollbar-thumb:hover { background: #484f58; }
+
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    thead th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: #1c2128;
+      color: var(--muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      font-size: 11px;
+      border-bottom: 1px solid var(--border);
+    }
     th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
-    th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 11px; }
     tr:hover { background: rgba(255,255,255,0.03); }
     .pill { padding: 3px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; background: #21262d; }
   </style>
@@ -92,7 +141,12 @@
         <h1>Bambu Lab A1 Monitor</h1>
         <p id="last-updated">SN: 03919D570309175 • Connecting to Supabase...</p>
       </div>
-      <div id="state-badge" class="badge">LOADING...</div>
+      <div class="header-controls">
+        <select id="job-selector" class="job-select" title="Select Print Job (.3mf)">
+          <option value="__LIVE__">Loading print jobs...</option>
+        </select>
+        <div id="state-badge" class="badge">LOADING...</div>
+      </div>
     </header>
 
     <div class="card progress-card">
@@ -129,27 +183,32 @@
     </div>
 
     <div class="card chart-card">
-      <div class="card-label" style="margin-bottom: 10px;">Live Temperature History (°C)</div>
+      <div class="card-label" style="margin-bottom: 10px;">Temperature History (°C)</div>
       <canvas id="tempChart"></canvas>
     </div>
 
-    <div class="card table-card">
-      <div class="card-label" style="margin-bottom: 12px;">Recent Synchronized Events</div>
-      <table>
-        <thead>
-          <tr>
-            <th>Timestamp (IST)</th>
-            <th>Trigger</th>
-            <th>State</th>
-            <th>Layer</th>
-            <th>Progress</th>
-            <th>Nozzle</th>
-            <th>Bed</th>
-            <th>Error</th>
-          </tr>
-        </thead>
-        <tbody id="log-table-body"></tbody>
-      </table>
+    <div class="card">
+      <div class="table-header-row">
+        <div class="card-label" style="margin-bottom: 0;">Print Event Log (Scrollable)</div>
+        <span id="event-count-label" style="font-size: 12px; color: var(--muted);">0 events loaded</span>
+      </div>
+      <div class="table-scroll-box">
+        <table>
+          <thead>
+            <tr>
+              <th>Timestamp (IST)</th>
+              <th>Trigger</th>
+              <th>State</th>
+              <th>Layer</th>
+              <th>Progress</th>
+              <th>Nozzle</th>
+              <th>Bed</th>
+              <th>Error</th>
+            </tr>
+          </thead>
+          <tbody id="log-table-body"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
@@ -158,7 +217,6 @@
     const SUPABASE_KEY = "sb_publishable_1tuDdE0EIPisl-XgsQno5g_olhE8B8J";
     const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-    // Initialize Temperature Chart
     const ctx = document.getElementById("tempChart").getContext("2d");
     const tempChart = new Chart(ctx, {
       type: "line",
@@ -180,17 +238,23 @@
       }
     });
 
-    function renderLatestCard(row) {
+    let activeJobName = "";
+    let selectedJobName = "__LIVE__";
+    let currentRows = [];
+
+    function renderLatestCard(row, isHistorical = false) {
       if (!row) return;
       const badge = document.getElementById("state-badge");
       badge.textContent = row.gcode_state;
       badge.className = "badge state-" + row.gcode_state;
 
+      const modeTag = isHistorical ? "ARCHIVE VIEW" : `LIVE • ${row.trigger}`;
       document.getElementById("last-updated").textContent =
-        `SN: ${row.device_sn} • Last Sync: ${row.timestamp} (${row.trigger})`;
+        `SN: ${row.device_sn} • Last Sync: ${row.timestamp} (${modeTag})`;
       document.getElementById("subtask-name").textContent =
         row.subtask_name && row.subtask_name !== "NONE" ? row.subtask_name : "No active print job";
-      document.getElementById("eta-text").textContent = `${row.mc_remaining_time ?? 0} min remaining`;
+      document.getElementById("eta-text").textContent =
+        row.gcode_state === "FINISH" ? "Completed" : `${row.mc_remaining_time ?? 0} min remaining`;
 
       const pct = row.mc_percent ?? 0;
       document.getElementById("progress-bar").style.width = pct + "%";
@@ -211,8 +275,9 @@
     function renderTableAndChart(rows) {
       const tbody = document.getElementById("log-table-body");
       tbody.innerHTML = "";
+      document.getElementById("event-count-label").textContent = `${rows.length} events for this print`;
 
-      rows.slice(0, 20).forEach(r => {
+      rows.forEach(r => {
         const tr = document.createElement("tr");
         tr.innerHTML = `
           <td>${r.timestamp}</td>
@@ -227,47 +292,144 @@
         tbody.appendChild(tr);
       });
 
+      // Downsample chart points slightly if > 150 rows so chart stays super smooth
       const chronological = [...rows].reverse();
-      tempChart.data.labels = chronological.map(r => r.timestamp.split(" ")[1] || r.timestamp);
-      tempChart.data.datasets[0].data = chronological.map(r => r.nozzle_temper);
-      tempChart.data.datasets[1].data = chronological.map(r => r.bed_temper);
+      const step = chronological.length > 150 ? Math.ceil(chronological.length / 150) : 1;
+      const chartData = chronological.filter((_, idx) => idx % step === 0);
+
+      tempChart.data.labels = chartData.map(r => r.timestamp.split(" ")[1] || r.timestamp);
+      tempChart.data.datasets[0].data = chartData.map(r => r.nozzle_temper);
+      tempChart.data.datasets[1].data = chartData.map(r => r.bed_temper);
       tempChart.update("none");
     }
 
-    let recentRows = [];
-
-    async function loadInitialData() {
+    // Build dropdown list of unique .3mf print jobs from recent history
+    async function populateJobDropdown(latestSubtask) {
       const { data, error } = await db
+        .from("printer_logs")
+        .select("subtask_name, gcode_state, timestamp, unix_epoch")
+        .neq("subtask_name", "NONE")
+        .order("unix_epoch", { ascending: false })
+        .limit(3000);
+
+      if (error || !data) return;
+
+      const jobMap = new Map();
+      for (const row of data) {
+        if (!row.subtask_name) continue;
+        if (!jobMap.has(row.subtask_name)) {
+          jobMap.set(row.subtask_name, {
+            name: row.subtask_name,
+            lastState: row.gcode_state,
+            lastTime: row.timestamp
+          });
+        }
+      }
+
+      const selector = document.getElementById("job-selector");
+      const previousSelection = selector.value;
+      selector.innerHTML = "";
+
+      const liveOpt = document.createElement("option");
+      liveOpt.value = "__LIVE__";
+      liveOpt.textContent = `LIVE: ${latestSubtask && latestSubtask !== "NONE" ? latestSubtask : "Current Printer Status"}`;
+      selector.appendChild(liveOpt);
+
+      jobMap.forEach((info, name) => {
+        const opt = document.createElement("option");
+        opt.value = name;
+        const dateTag = info.lastTime ? info.lastTime.split(" ")[0] : "";
+        opt.textContent = `${name} [${info.lastState} • ${dateTag}]`;
+        selector.appendChild(opt);
+      });
+
+      if ([...selector.options].some(o => o.value === previousSelection)) {
+        selector.value = previousSelection;
+      }
+    }
+
+    // Load all rows for a specific .3mf task name (or the current live task)
+    async function loadJobLogs(targetSubtask, isHistorical) {
+      let query = db
         .from("printer_logs")
         .select("*")
         .order("unix_epoch", { ascending: false })
-        .limit(40);
+        .limit(2000);
 
+      if (targetSubtask && targetSubtask !== "NONE") {
+        query = query.eq("subtask_name", targetSubtask);
+      }
+
+      const { data, error } = await query;
       if (error) {
         document.getElementById("last-updated").textContent = "Error loading data: " + error.message;
         return;
       }
+
       if (data && data.length > 0) {
-        recentRows = data;
-        renderLatestCard(recentRows[0]);
-        renderTableAndChart(recentRows);
+        currentRows = data;
+        renderLatestCard(currentRows[0], isHistorical);
+        renderTableAndChart(currentRows);
+      }
+    }
+
+    async function initializeDashboard() {
+      // 1. Find the very latest row to identify the active print job
+      const { data: latestData, error } = await db
+        .from("printer_logs")
+        .select("*")
+        .order("unix_epoch", { ascending: false })
+        .limit(1);
+
+      if (error) {
+        document.getElementById("last-updated").textContent = "Error connecting: " + error.message;
+        return;
+      }
+
+      if (latestData && latestData.length > 0) {
+        activeJobName = latestData[0].subtask_name;
+        await populateJobDropdown(activeJobName);
+        await loadJobLogs(activeJobName, false);
       } else {
         document.getElementById("last-updated").textContent = "Connected to Supabase • Waiting for first ESP32 log...";
       }
     }
 
+    // Handle dropdown change between LIVE and past .3mf prints
+    document.getElementById("job-selector").addEventListener("change", async (e) => {
+      selectedJobName = e.target.value;
+      if (selectedJobName === "__LIVE__") {
+        await loadJobLogs(activeJobName, false);
+      } else {
+        await loadJobLogs(selectedJobName, true);
+      }
+    });
+
     // Subscribe to live INSERT events from ESP32
     db.channel("printer-live")
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "printer_logs" }, payload => {
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "printer_logs" }, async (payload) => {
         const newRow = payload.new;
-        recentRows.unshift(newRow);
-        if (recentRows.length > 40) recentRows.pop();
-        renderLatestCard(newRow);
-        renderTableAndChart(recentRows);
+
+        // If a brand new .3mf print starts, refresh the dropdown list
+        if (newRow.subtask_name && newRow.subtask_name !== activeJobName) {
+          activeJobName = newRow.subtask_name;
+          await populateJobDropdown(activeJobName);
+          if (selectedJobName === "__LIVE__") {
+            await loadJobLogs(activeJobName, false);
+            return;
+          }
+        }
+
+        // Append live rows only when viewing LIVE (or viewing the matching active .3mf job)
+        if (selectedJobName === "__LIVE__" || selectedJobName === newRow.subtask_name) {
+          currentRows.unshift(newRow);
+          renderLatestCard(newRow, selectedJobName !== "__LIVE__");
+          renderTableAndChart(currentRows);
+        }
       })
       .subscribe();
 
-    loadInitialData();
+    initializeDashboard();
   </script>
 </body>
 </html>
