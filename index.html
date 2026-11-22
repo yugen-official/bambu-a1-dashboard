@@ -312,7 +312,7 @@
 
     .chart-canvas-wrap {
       position: relative;
-      height: 290px;
+      height: 300px;
       width: 100%;
       touch-action: pan-y;
     }
@@ -515,7 +515,7 @@
       <div class="chart-header">
         <div>
           <div class="card-label" style="margin-bottom: 2px;">Temperature History (°C)</div>
-          <div class="chart-hint">Swipe left/right to pan • Pinch or use + / − buttons to zoom</div>
+          <div class="chart-hint">Click or hover any point for exact Time & Temp • Swipe left/right to pan • Pinch or + / − to zoom</div>
         </div>
         <div class="zoom-controls">
           <button type="button" class="btn-zoom" id="btn-zoom-in" title="Zoom In">+</button>
@@ -601,7 +601,69 @@
       return `${hrs}h ${remMins}m ago`;
     }
 
-    // Initialize Chart with Trackpad Pan (2-finger swipe) & Pinch/Button Zoom Only
+    // Create Custom 3D Printer Nozzle Icon for Chart Legend & Tooltip
+    function createNozzleLegendIcon(color = "#ff5252") {
+      const c = document.createElement("canvas");
+      c.width = 20;
+      c.height = 20;
+      const g = c.getContext("2d");
+      g.fillStyle = color;
+      g.strokeStyle = "#ffffff";
+      g.lineWidth = 1;
+
+      // Upper heater block / hex body
+      g.beginPath();
+      g.roundRect(4, 2, 12, 6, 1.5);
+      g.fill();
+
+      // Collar
+      g.beginPath();
+      g.rect(6, 8, 8, 2.5);
+      g.fill();
+
+      // Tapered conical nozzle tip pointing down
+      g.beginPath();
+      g.moveTo(5, 10.5);
+      g.lineTo(15, 10.5);
+      g.lineTo(11.3, 17.5);
+      g.lineTo(8.7, 17.5);
+      g.closePath();
+      g.fill();
+
+      // Fine orifice tip
+      g.beginPath();
+      g.rect(9.2, 17.5, 1.6, 1.5);
+      g.fill();
+
+      return c;
+    }
+
+    const nozzleIconCanvas = createNozzleLegendIcon("#ff5252");
+
+    // Vertical Dotted Crosshair Line Plugin (Restored for Point Inspection)
+    const verticalCrosshairPlugin = {
+      id: "verticalCrosshair",
+      afterDatasetsDraw(chart) {
+        const activeElements = chart.tooltip?.getActiveElements?.() || chart.getActiveElements?.();
+        if (!activeElements || activeElements.length === 0) return;
+
+        const x = activeElements[0].element.x;
+        const { top, bottom } = chart.chartArea;
+        const ctx = chart.ctx;
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.setLineDash([4, 4]);
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = "rgba(230, 237, 243, 0.65)";
+        ctx.moveTo(x, top);
+        ctx.lineTo(x, bottom);
+        ctx.stroke();
+        ctx.restore();
+      }
+    };
+
+    // Initialize Chart with Vertical Dotted Crosshair, Square Tooltip Box, Nozzle Icon & Trackpad Pan/Zoom
     const canvasEl = document.getElementById("tempChart");
     const ctx = canvasEl.getContext("2d");
     const tempChart = new Chart(ctx, {
@@ -616,7 +678,12 @@
             backgroundColor: "rgba(255, 82, 82, 0.1)",
             tension: 0.25,
             borderWidth: 2,
-            pointRadius: 1.5
+            pointRadius: 1.5,
+            pointHoverRadius: 5,
+            pointHoverBackgroundColor: "#ff5252",
+            pointHoverBorderColor: "#ffffff",
+            pointHoverBorderWidth: 1.5,
+            pointStyle: nozzleIconCanvas
           },
           {
             label: "Bed (°C)",
@@ -625,7 +692,12 @@
             backgroundColor: "rgba(41, 182, 246, 0.1)",
             tension: 0.25,
             borderWidth: 2,
-            pointRadius: 1.5
+            pointRadius: 1.5,
+            pointHoverRadius: 5,
+            pointHoverBackgroundColor: "#29b6f6",
+            pointHoverBorderColor: "#ffffff",
+            pointHoverBorderWidth: 1.5,
+            pointStyle: "rectRounded"
           }
         ]
       },
@@ -633,6 +705,11 @@
         responsive: true,
         maintainAspectRatio: false,
         animation: false,
+        interaction: {
+          mode: "index",
+          intersect: false
+        },
+        events: ["mousemove", "mouseout", "click", "touchstart", "touchmove"],
         scales: {
           x: {
             ticks: { color: "#8b949e", maxTicksLimit: 10 },
@@ -644,7 +721,34 @@
           }
         },
         plugins: {
-          legend: { labels: { color: "#e6edf3" } },
+          legend: {
+            labels: {
+              color: "#e6edf3",
+              usePointStyle: true,
+              padding: 16
+            }
+          },
+          tooltip: {
+            enabled: true,
+            mode: "index",
+            intersect: false,
+            backgroundColor: "rgba(22, 27, 34, 0.96)",
+            titleColor: "#e6edf3",
+            bodyColor: "#e6edf3",
+            borderColor: "#8b949e",
+            borderWidth: 1,
+            cornerRadius: 4, // Square dialogue box style
+            padding: 10,
+            displayColors: true,
+            usePointStyle: true,
+            callbacks: {
+              title: (items) => items.length ? `Time: ${items[0].label}` : "",
+              label: (ctx) => {
+                const name = ctx.dataset.label.replace(" (°C)", "");
+                return ` ${name}: ${Number(ctx.parsed.y).toFixed(1)}°C`;
+              }
+            }
+          },
           zoom: {
             pan: {
               enabled: true,
@@ -664,7 +768,8 @@
             }
           }
         }
-      }
+      },
+      plugins: [verticalCrosshairPlugin]
     });
 
     // Two-finger horizontal trackpad swipe -> pan left/right; trackpad pinch (ctrlKey) -> zoom
