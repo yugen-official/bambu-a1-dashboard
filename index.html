@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Bambu Lab A1 — Live & Historical Telemetry</title>
+  <title>Bambu Lab A1 — Telemetry & Session Dashboard</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
@@ -12,15 +12,21 @@
     :root {
       --bg: #0d1117;
       --card: #161b22;
+      --card-elevated: #1c2128;
       --border: #30363d;
       --text: #e6edf3;
       --muted: #8b949e;
       --green: #00e676;
+      --green-dim: rgba(0, 230, 118, 0.14);
       --amber: #ffab00;
+      --amber-dim: rgba(255, 171, 0, 0.15);
       --red: #ff5252;
+      --red-dim: rgba(255, 82, 82, 0.15);
       --blue: #29b6f6;
     }
+
     * { box-sizing: border-box; margin: 0; padding: 0; }
+
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       background: var(--bg);
@@ -28,183 +34,404 @@
       padding: 20px;
       line-height: 1.5;
     }
-    .container { max-width: 1180px; margin: 0 auto; }
+
+    .container { max-width: 1220px; margin: 0 auto; }
+
+    /* Header & Controls */
     header {
       display: flex;
       flex-wrap: wrap;
       justify-content: space-between;
       align-items: center;
-      gap: 12px;
+      gap: 14px;
       padding-bottom: 18px;
       border-bottom: 1px solid var(--border);
-      margin-bottom: 22px;
+      margin-bottom: 20px;
     }
-    .title-group h1 { font-size: 22px; font-weight: 700; }
-    .title-group p { font-size: 13px; color: var(--muted); }
+
+    .title-group h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.2px; }
+    .title-group p { font-size: 13px; color: var(--muted); margin-top: 2px; }
+
     .header-controls {
       display: flex;
       flex-wrap: wrap;
       align-items: center;
       gap: 10px;
     }
-    select.job-select {
-      background: #161b22;
+
+    select#session-selector {
+      background: var(--card);
       color: var(--text);
       border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 8px 12px;
+      border-radius: 10px;
+      padding: 9px 14px;
       font-size: 13px;
-      font-weight: 600;
-      max-width: 360px;
+      font-weight: 500;
+      max-width: 380px;
       cursor: pointer;
+      outline: none;
     }
-    select.job-select:focus { outline: 1px solid var(--blue); }
+    select#session-selector:focus { border-color: var(--green); }
+
+    /* Status Pill Badges */
     .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
       padding: 8px 16px;
       border-radius: 999px;
       font-weight: 700;
-      font-size: 14px;
+      font-size: 13px;
       letter-spacing: 0.5px;
       text-transform: uppercase;
       background: #21262d;
       border: 1px solid var(--border);
+      white-space: nowrap;
     }
-    .state-RUNNING, .state-PREPARE { background: rgba(0, 230, 118, 0.15); color: var(--green); border-color: var(--green); }
-    .state-PAUSE { background: rgba(255, 171, 0, 0.15); color: var(--amber); border-color: var(--amber); }
-    .state-FAILED { background: rgba(255, 82, 82, 0.15); color: var(--red); border-color: var(--red); }
-    .state-FINISH { background: rgba(41, 182, 246, 0.15); color: var(--blue); border-color: var(--blue); }
 
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      gap: 16px;
-      margin-bottom: 20px;
+    .status-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: currentColor;
     }
+
+    /* 1. LIVE: Green blinking */
+    .badge-live {
+      background: var(--green-dim);
+      color: var(--green);
+      border-color: var(--green);
+    }
+    .badge-live .status-dot {
+      animation: pulseGreen 1.2s infinite ease-in-out;
+    }
+    @keyframes pulseGreen {
+      0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 0 0 rgba(0, 230, 118, 0.7); }
+      50% { opacity: 0.25; transform: scale(0.85); box-shadow: 0 0 0 6px rgba(0, 230, 118, 0); }
+    }
+
+    /* 2. FINISHED: Constant Green */
+    .badge-finished {
+      background: var(--green-dim);
+      color: var(--green);
+      border-color: var(--green);
+    }
+
+    /* 3. FAILED: Constant Red */
+    .badge-failed {
+      background: var(--red-dim);
+      color: var(--red);
+      border-color: var(--red);
+    }
+
+    /* 4. OFFLINE / Last Seen: Amber/Red */
+    .badge-offline {
+      background: linear-gradient(90deg, rgba(255, 171, 0, 0.18), rgba(255, 82, 82, 0.18));
+      color: var(--amber);
+      border-color: var(--red);
+    }
+    .badge-offline .status-dot {
+      background: var(--red);
+    }
+
+    /* 5. PAUSED: Amber blinking */
+    .badge-paused {
+      background: var(--amber-dim);
+      color: var(--amber);
+      border-color: var(--amber);
+    }
+    .badge-paused .status-dot {
+      animation: pulseAmber 1.2s infinite ease-in-out;
+    }
+    @keyframes pulseAmber {
+      0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 171, 0, 0.7); }
+      50% { opacity: 0.25; transform: scale(0.85); box-shadow: 0 0 0 6px rgba(255, 171, 0, 0); }
+    }
+
+    /* Cards & Progress Group */
     .card {
       background: var(--card);
       border: 1px solid var(--border);
       border-radius: 12px;
       padding: 18px;
     }
-    .card-label { font-size: 12px; text-transform: uppercase; color: var(--muted); letter-spacing: 0.6px; margin-bottom: 6px; }
+
+    .progress-card {
+      margin-bottom: 20px;
+      border-color: rgba(0, 230, 118, 0.35);
+    }
+
+    .progress-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .job-title-wrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .session-tag {
+      background: rgba(0, 230, 118, 0.14);
+      color: var(--green);
+      border: 1px solid rgba(0, 230, 118, 0.35);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 3px 9px;
+      border-radius: 6px;
+    }
+
+    .job-name {
+      font-size: 16px;
+      font-weight: 600;
+      color: #fff;
+      word-break: break-word;
+    }
+
+    /* Grouped Task Timing Strip */
+    .task-timing-group {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+      background: var(--card-elevated);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin-bottom: 14px;
+    }
+
+    .timing-item {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      border-right: 1px solid var(--border);
+      padding-right: 10px;
+    }
+    .timing-item:last-child { border-right: none; padding-right: 0; }
+
+    .timing-label {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.6px;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    .timing-value {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .timing-value.highlight-green { color: var(--green); }
+
+    .progress-track {
+      width: 100%;
+      height: 14px;
+      background: #21262d;
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #00c853, #00e676);
+      transition: width 0.4s ease;
+    }
+
+    /* Telemetry Grid */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+
+    .card-label {
+      font-size: 12px;
+      text-transform: uppercase;
+      color: var(--muted);
+      letter-spacing: 0.6px;
+      margin-bottom: 6px;
+    }
+
     .card-value { font-size: 28px; font-weight: 700; }
     .card-sub { font-size: 13px; color: var(--muted); margin-top: 4px; }
 
-    .progress-card { margin-bottom: 20px; }
-    .progress-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; flex-wrap: wrap; gap: 8px; }
-    .job-name { font-size: 16px; font-weight: 600; color: #fff; word-break: break-all; }
-    .progress-track { width: 100%; height: 14px; background: #21262d; border-radius: 999px; overflow: hidden; }
-    .progress-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #00c853, #00e676); transition: width 0.4s ease; }
-
-    /* Chart Card with Scaling Controls & Clean Bottom Margin */
+    /* Chart Card & Manual Zoom Buttons */
     .chart-card {
       margin-bottom: 20px;
-      padding-bottom: 20px;
-    }
-    .chart-toolbar {
       display: flex;
-      flex-wrap: wrap;
+      flex-direction: column;
+    }
+
+    .chart-header {
+      display: flex;
       justify-content: space-between;
       align-items: center;
+      flex-wrap: wrap;
       gap: 10px;
       margin-bottom: 12px;
     }
-    .scale-controls {
-      display: flex;
-      flex-wrap: wrap;
+
+    .chart-hint {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .zoom-controls {
+      display: inline-flex;
       align-items: center;
       gap: 6px;
     }
-    .scale-group-label {
-      font-size: 11px;
-      color: var(--muted);
-      text-transform: uppercase;
-      font-weight: 600;
-      margin-left: 6px;
-      margin-right: 2px;
-    }
-    .scale-btn {
+
+    .btn-zoom {
       background: #21262d;
       color: var(--text);
       border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 4px 9px;
-      font-size: 11px;
-      font-weight: 600;
+      border-radius: 7px;
+      padding: 5px 12px;
+      font-size: 14px;
+      font-weight: 700;
       cursor: pointer;
-      transition: all 0.15s ease;
+      transition: background 0.15s, border-color 0.15s;
     }
-    .scale-btn:hover { background: #30363d; }
-    .scale-btn.active {
-      background: rgba(41, 182, 246, 0.2);
-      color: var(--blue);
-      border-color: var(--blue);
-    }
-    .chart-wrapper {
-      position: relative;
-      width: 100%;
-      height: 310px;
-      cursor: crosshair;
-    }
-    .chart-hint {
-      font-size: 11px;
-      color: var(--muted);
-      margin-top: 8px;
-      text-align: right;
+    .btn-zoom:hover {
+      background: #30363d;
+      border-color: var(--green);
     }
 
-    /* Scrollable Event Table with Sticky Header */
+    .chart-canvas-wrap {
+      position: relative;
+      height: 290px;
+      width: 100%;
+      touch-action: pan-y;
+    }
+
+    /* Event Log Table with Frozen Timestamp Column */
     .table-header-row {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 12px;
       flex-wrap: wrap;
-      gap: 8px;
+      gap: 10px;
+      margin-bottom: 12px;
     }
-    .table-actions {
+
+    .table-title-group {
       display: flex;
       align-items: center;
+      flex-wrap: wrap;
       gap: 10px;
     }
-    .btn-small {
-      background: #21262d;
-      color: var(--blue);
+
+    .log-start-badge {
+      background: var(--card-elevated);
       border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 4px 10px;
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: 12px;
-      font-weight: 600;
-      cursor: pointer;
+      font-weight: 700;
+      padding: 3px 10px;
+      border-radius: 6px;
     }
-    .btn-small:hover { background: #30363d; }
-    .table-scroll-box {
-      max-height: 440px;
-      overflow-y: auto;
+
+    .table-scroll-container {
       overflow-x: auto;
+      max-height: 460px;
+      overflow-y: auto;
       border: 1px solid var(--border);
       border-radius: 8px;
+      position: relative;
     }
-    .table-scroll-box::-webkit-scrollbar { width: 8px; height: 8px; }
-    .table-scroll-box::-webkit-scrollbar-track { background: #0d1117; }
-    .table-scroll-box::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
-    .table-scroll-box::-webkit-scrollbar-thumb:hover { background: #484f58; }
 
-    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      font-size: 13px;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
     thead th {
       position: sticky;
       top: 0;
-      z-index: 2;
       background: #1c2128;
       color: var(--muted);
       font-weight: 600;
       text-transform: uppercase;
       font-size: 11px;
-      border-bottom: 1px solid var(--border);
+      z-index: 2;
     }
-    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
-    tr:hover { background: rgba(255,255,255,0.03); }
-    .pill { padding: 3px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; background: #21262d; }
+
+    /* Frozen First Column: TIMESTAMP */
+    th.sticky-col,
+    td.sticky-col {
+      position: sticky;
+      left: 0;
+      z-index: 3;
+      background: var(--card);
+      border-right: 1px solid var(--border);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+    }
+
+    thead th.sticky-col {
+      z-index: 4;
+      background: #1c2128;
+    }
+
+    tbody tr:hover td {
+      background: #1f242c;
+    }
+    tbody tr:hover td.sticky-col {
+      background: #1f242c;
+    }
+
+    .pill {
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      background: #21262d;
+    }
+
+    .btn-load-more {
+      background: #21262d;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-load-more:hover { border-color: var(--green); }
+
+    @media (max-width: 640px) {
+      .timing-item {
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 6px;
+        padding-right: 0;
+      }
+      .timing-item:last-child { border-bottom: none; padding-bottom: 0; }
+    }
   </style>
 </head>
 <body>
@@ -215,23 +442,51 @@
         <p id="last-updated">SN: 03919D570309175 • Connecting to Supabase...</p>
       </div>
       <div class="header-controls">
-        <select id="job-selector" class="job-select" title="Select Print Job (.3mf)">
-          <option value="__LIVE__">Scanning print history...</option>
+        <select id="session-selector" title="Select Print Session">
+          <option value="__LIVE__">LIVE</option>
         </select>
-        <div id="state-badge" class="badge">LOADING...</div>
+        <div id="state-badge" class="badge">
+          <span class="status-dot"></span>
+          <span id="state-badge-text">LOADING...</span>
+        </div>
       </div>
     </header>
 
+    <!-- Grouped Task Progress & Timing Card -->
     <div class="card progress-card">
-      <div class="progress-header">
-        <span class="job-name" id="subtask-name">No active print job</span>
-        <span id="eta-text" style="color: var(--muted); font-size: 14px;">-- min remaining</span>
+      <div class="progress-top">
+        <div class="job-title-wrap">
+          <span class="session-tag" id="active-session-id">--</span>
+          <span class="job-name" id="subtask-name">No active print job</span>
+        </div>
+        <span id="progress-pct-inline" style="font-weight: 700; color: var(--green); font-size: 15px;">0%</span>
       </div>
+
+      <div class="task-timing-group">
+        <div class="timing-item">
+          <span class="timing-label">START:</span>
+          <span class="timing-value" id="task-start-time">--:--:--</span>
+        </div>
+        <div class="timing-item">
+          <span class="timing-label">END:</span>
+          <span class="timing-value" id="task-end-time">--:--:--</span>
+        </div>
+        <div class="timing-item">
+          <span class="timing-label">TOTAL:</span>
+          <span class="timing-value" id="task-total-time">00:00:00</span>
+        </div>
+        <div class="timing-item">
+          <span class="timing-label">REMAINING:</span>
+          <span class="timing-value highlight-green" id="task-remaining-time">00:00</span>
+        </div>
+      </div>
+
       <div class="progress-track">
         <div class="progress-fill" id="progress-bar"></div>
       </div>
     </div>
 
+    <!-- Live Metrics Grid -->
     <div class="grid">
       <div class="card">
         <div class="card-label">Print Progress</div>
@@ -255,44 +510,38 @@
       </div>
     </div>
 
+    <!-- Temperature History Chart -->
     <div class="card chart-card">
-      <div class="chart-toolbar">
-        <div class="card-label" style="margin-bottom: 0;">Temperature History (°C)</div>
-        <div class="scale-controls">
-          <span class="scale-group-label">X-Time:</span>
-          <button class="scale-btn x-btn active" data-xrange="all">All</button>
-          <button class="scale-btn x-btn" data-xrange="21600">6h</button>
-          <button class="scale-btn x-btn" data-xrange="3600">1h</button>
-          <button class="scale-btn x-btn" data-xrange="900">15m</button>
-
-          <span class="scale-group-label">Y-Temp:</span>
-          <button class="scale-btn y-btn active" data-ymin="auto" data-ymax="auto">Auto</button>
-          <button class="scale-btn y-btn" data-ymin="0" data-ymax="300">0–300°</button>
-          <button class="scale-btn y-btn" data-ymin="180" data-ymax="260">Nozzle</button>
-          <button class="scale-btn y-btn" data-ymin="20" data-ymax="110">Bed</button>
-
-          <button class="scale-btn" id="reset-zoom-btn" style="color: var(--amber); margin-left: 6px;">Reset View</button>
+      <div class="chart-header">
+        <div>
+          <div class="card-label" style="margin-bottom: 2px;">Temperature History (°C)</div>
+          <div class="chart-hint">Swipe left/right to pan • Pinch or use + / − buttons to zoom</div>
+        </div>
+        <div class="zoom-controls">
+          <button type="button" class="btn-zoom" id="btn-zoom-in" title="Zoom In">+</button>
+          <button type="button" class="btn-zoom" id="btn-zoom-out" title="Zoom Out">−</button>
+          <button type="button" class="btn-zoom" id="btn-zoom-reset" title="Reset Zoom">Reset</button>
         </div>
       </div>
-      <div class="chart-wrapper">
+      <div class="chart-canvas-wrap">
         <canvas id="tempChart"></canvas>
       </div>
-      <div class="chart-hint">Scroll wheel to zoom X-axis • Drag left/right to pan through print timeline • Hover for crosshair pointer</div>
     </div>
 
+    <!-- Print Event Log (Scrollable) -->
     <div class="card">
       <div class="table-header-row">
-        <div class="card-label" style="margin-bottom: 0;">Print Event Log (Scrollable)</div>
-        <div class="table-actions">
-          <span id="event-count-label" style="font-size: 12px; color: var(--muted);">0 events loaded</span>
-          <button id="show-all-btn" class="btn-small" style="display: none;">Show All Rows</button>
+        <div class="table-title-group">
+          <div class="card-label" style="margin-bottom: 0;" id="table-title">Print Event Log (Scrollable)</div>
+          <span class="log-start-badge" id="log-start-time">START: --:--:--</span>
         </div>
+        <button type="button" class="btn-load-more" id="btn-load-all" style="display: none;">Load All Rows</button>
       </div>
-      <div class="table-scroll-box">
+      <div class="table-scroll-container">
         <table>
           <thead>
             <tr>
-              <th>Timestamp (IST)</th>
+              <th class="sticky-col">Timestamp (IST)</th>
               <th>Trigger</th>
               <th>State</th>
               <th>Layer</th>
@@ -313,29 +562,48 @@
     const SUPABASE_KEY = "sb_publishable_1tuDdE0EIPisl-XgsQno5g_olhE8B8J";
     const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-    // Custom Crosshair Pointer Plugin for crisp vertical tracking line
-    const crosshairPlugin = {
-      id: "crosshairPointer",
-      afterDatasetsDraw(chart) {
-        const { ctx, tooltip, chartArea } = chart;
-        if (!tooltip || !tooltip._active || tooltip._active.length === 0) return;
+    const OFFLINE_THRESHOLD_SEC = 90; // Mark OFFLINE if no heartbeat for > 90s
 
-        const x = tooltip._active[0].element.x;
-        if (x < chartArea.left || x > chartArea.right) return;
+    let sessionsCache = [];
+    let selectedMode = "__LIVE__"; // "__LIVE__" or a specific session_id
+    let currentRows = [];
+    let latestLiveRow = null;
+    let showAllTableRows = false;
 
-        ctx.save();
-        ctx.beginPath();
-        ctx.setLineDash([4, 4]);
-        ctx.lineWidth = 1.2;
-        ctx.strokeStyle = "rgba(230, 237, 243, 0.55)";
-        ctx.moveTo(x, chartArea.top);
-        ctx.lineTo(x, chartArea.bottom);
-        ctx.stroke();
-        ctx.restore();
-      }
-    };
+    // Formatting Helpers
+    function extractHHMMSS(ts) {
+      if (!ts) return "--:--:--";
+      const parts = ts.trim().split(" ");
+      return parts.length > 1 ? parts[1] : ts;
+    }
 
-    const ctx = document.getElementById("tempChart").getContext("2d");
+    function formatSecondsToHHMMSS(totalSec) {
+      const sec = Math.max(0, Math.floor(Number(totalSec) || 0));
+      const h = String(Math.floor(sec / 3600)).padStart(2, "0");
+      const m = String(Math.floor((sec % 3600) / 60)).padStart(2, "0");
+      const s = String(sec % 60).padStart(2, "0");
+      return `${h}:${m}:${s}`;
+    }
+
+    function formatMinutesToHHMM(mins) {
+      const totalMins = Math.max(0, Math.floor(Number(mins) || 0));
+      const h = String(Math.floor(totalMins / 60)).padStart(2, "0");
+      const m = String(totalMins % 60).padStart(2, "0");
+      return `${h}:${m}`;
+    }
+
+    function formatRelativeOffline(secondsAgo) {
+      if (secondsAgo < 60) return `${secondsAgo}s ago`;
+      const mins = Math.floor(secondsAgo / 60);
+      if (mins < 60) return `${mins}m ago`;
+      const hrs = Math.floor(mins / 60);
+      const remMins = mins % 60;
+      return `${hrs}h ${remMins}m ago`;
+    }
+
+    // Initialize Chart with Trackpad Pan (2-finger swipe) & Pinch/Button Zoom Only
+    const canvasEl = document.getElementById("tempChart");
+    const ctx = canvasEl.getContext("2d");
     const tempChart = new Chart(ctx, {
       type: "line",
       data: {
@@ -345,75 +613,53 @@
             label: "Nozzle (°C)",
             data: [],
             borderColor: "#ff5252",
-            backgroundColor: "rgba(255,82,82,0.1)",
+            backgroundColor: "rgba(255, 82, 82, 0.1)",
             tension: 0.25,
             borderWidth: 2,
-            pointRadius: 1.5,
-            pointHoverRadius: 5,
-            pointHoverBackgroundColor: "#ff5252"
+            pointRadius: 1.5
           },
           {
             label: "Bed (°C)",
             data: [],
             borderColor: "#29b6f6",
-            backgroundColor: "rgba(41,182,246,0.1)",
+            backgroundColor: "rgba(41, 182, 246, 0.1)",
             tension: 0.25,
             borderWidth: 2,
-            pointRadius: 1.5,
-            pointHoverRadius: 5,
-            pointHoverBackgroundColor: "#29b6f6"
+            pointRadius: 1.5
           }
         ]
       },
-      plugins: [crosshairPlugin],
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        layout: {
-          padding: { top: 4, right: 12, bottom: 10, left: 4 }
-        },
-        interaction: {
-          mode: "index",
-          intersect: false
-        },
+        animation: false,
         scales: {
           x: {
-            ticks: {
-              color: "#8b949e",
-              maxTicksLimit: 10,
-              maxRotation: 0,
-              padding: 8
-            },
+            ticks: { color: "#8b949e", maxTicksLimit: 10 },
             grid: { color: "#21262d" }
           },
           y: {
-            ticks: {
-              color: "#8b949e",
-              padding: 8
-            },
+            ticks: { color: "#8b949e" },
             grid: { color: "#21262d" }
           }
         },
         plugins: {
-          legend: {
-            labels: { color: "#e6edf3", boxWidth: 14, padding: 14 }
-          },
-          tooltip: {
-            backgroundColor: "rgba(22, 27, 34, 0.95)",
-            borderColor: "#30363d",
-            borderWidth: 1,
-            titleColor: "#e6edf3",
-            bodyColor: "#e6edf3",
-            padding: 10
-          },
+          legend: { labels: { color: "#e6edf3" } },
           zoom: {
             pan: {
               enabled: true,
               mode: "x"
             },
             zoom: {
-              wheel: { enabled: true },
-              pinch: { enabled: true },
+              wheel: {
+                enabled: false // Disabled so normal scrolling/swiping never triggers zoom
+              },
+              pinch: {
+                enabled: true // Trackpad pinch-to-zoom & touch pinch enabled
+              },
+              drag: {
+                enabled: false
+              },
               mode: "x"
             }
           }
@@ -421,64 +667,152 @@
       }
     });
 
-    let activeJobName = "";
-    let selectedJobName = "__LIVE__";
-    let currentRows = [];
-    let chartChronologicalRows = [];
-    let renderAllTableRows = false;
-    const INITIAL_TABLE_CAP = 500;
+    // Two-finger horizontal trackpad swipe -> pan left/right; trackpad pinch (ctrlKey) -> zoom
+    canvasEl.addEventListener("wheel", (e) => {
+      if (e.ctrlKey) {
+        e.preventDefault();
+        const zoomFactor = e.deltaY < 0 ? 1.12 : 0.88;
+        tempChart.zoom(zoomFactor);
+      } else if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && Math.abs(e.deltaX) > 2) {
+        e.preventDefault();
+        tempChart.pan({ x: -e.deltaX * 1.4 }, undefined, "none");
+      }
+    }, { passive: false });
 
-    function renderLatestCard(row, isHistorical = false) {
-      if (!row) return;
+    // Manual Zoom Buttons (+, -, Reset)
+    document.getElementById("btn-zoom-in").addEventListener("click", () => tempChart.zoom(1.25));
+    document.getElementById("btn-zoom-out").addEventListener("click", () => tempChart.zoom(0.8));
+    document.getElementById("btn-zoom-reset").addEventListener("click", () => tempChart.resetZoom());
+
+    // Update Status Badge (LIVE blinking green / PAUSED blinking amber / FINISHED constant green / FAILED constant red / OFFLINE amber-red)
+    function updateStatusBadge(state, lastEpoch, isHistoricalSession) {
       const badge = document.getElementById("state-badge");
-      badge.textContent = row.gcode_state;
-      badge.className = "badge state-" + row.gcode_state;
+      const badgeText = document.getElementById("state-badge-text");
+      const nowEpoch = Math.floor(Date.now() / 1000);
+      const secondsSinceLastSeen = lastEpoch ? Math.max(0, nowEpoch - Number(lastEpoch)) : 999999;
 
-      const modeTag = isHistorical ? "ARCHIVE VIEW" : `LIVE • ${row.trigger}`;
-      document.getElementById("last-updated").textContent =
-        `SN: ${row.device_sn} • Last Sync: ${row.timestamp} (${modeTag})`;
-      document.getElementById("subtask-name").textContent =
-        row.subtask_name && row.subtask_name !== "NONE" ? row.subtask_name : "No active print job";
-      document.getElementById("eta-text").textContent =
-        row.gcode_state === "FINISH" ? "Completed" : `${row.mc_remaining_time ?? 0} min remaining`;
+      badge.className = "badge";
 
-      const pct = row.mc_percent ?? 0;
-      document.getElementById("progress-bar").style.width = pct + "%";
-      document.getElementById("percent-val").textContent = pct + "%";
-      document.getElementById("layer-val").textContent = `Layer ${row.layer_num ?? 0} / ${row.total_layer_num ?? 0}`;
-
-      document.getElementById("nozzle-val").textContent = `${Number(row.nozzle_temper).toFixed(1)}°C`;
-      document.getElementById("nozzle-target").textContent = `Target: ${Number(row.nozzle_target_temper).toFixed(0)}°C`;
-
-      document.getElementById("bed-val").textContent = `${Number(row.bed_temper).toFixed(1)}°C`;
-      document.getElementById("bed-target").textContent = `Target: ${Number(row.bed_target_temper).toFixed(0)}°C`;
-
-      document.getElementById("speed-val").textContent = `${row.spd_mag ?? 100}%`;
-      const fanPct = Math.round(((row.fan_gear ?? 0) / 255) * 100);
-      document.getElementById("wifi-val").textContent = `Fan: ${fanPct}% • Wi-Fi: ${row.wifi_signal ?? "--"}`;
-    }
-
-    function renderTable(rows) {
-      const tbody = document.getElementById("log-table-body");
-      const showAllBtn = document.getElementById("show-all-btn");
-      const countLabel = document.getElementById("event-count-label");
-
-      const visibleRows = renderAllTableRows ? rows : rows.slice(0, INITIAL_TABLE_CAP);
-
-      if (!renderAllTableRows && rows.length > INITIAL_TABLE_CAP) {
-        countLabel.textContent = `Showing latest ${INITIAL_TABLE_CAP.toLocaleString()} of ${rows.length.toLocaleString()} events`;
-        showAllBtn.style.display = "inline-block";
-        showAllBtn.textContent = `Load All ${rows.length.toLocaleString()} Rows`;
-      } else {
-        countLabel.textContent = `${rows.length.toLocaleString()} total events for this print`;
-        showAllBtn.style.display = "none";
+      if (state === "FAILED") {
+        badge.classList.add("badge-failed");
+        badgeText.textContent = "FAILED";
+        return;
       }
 
-      const htmlChunks = new Array(visibleRows.length);
-      for (let i = 0; i < visibleRows.length; i++) {
-        const r = visibleRows[i];
-        htmlChunks[i] = `<tr>
-          <td>${r.timestamp}</td>
+      if (state === "FINISH") {
+        badge.classList.add("badge-finished");
+        badgeText.textContent = "FINISHED";
+        return;
+      }
+
+      if (!isHistoricalSession && secondsSinceLastSeen > OFFLINE_THRESHOLD_SEC) {
+        badge.classList.add("badge-offline");
+        badgeText.textContent = `OFFLINE • Last Seen ${formatRelativeOffline(secondsSinceLastSeen)}`;
+        return;
+      }
+
+      if (state === "RUNNING" || state === "PREPARE") {
+        badge.classList.add("badge-live");
+        badgeText.textContent = "LIVE";
+        return;
+      }
+
+      if (state === "PAUSE") {
+        badge.classList.add("badge-paused");
+        badgeText.textContent = "PAUSED";
+        return;
+      }
+
+      badgeText.textContent = state || "IDLE";
+    }
+
+    // Render Progress & Metrics Cards
+    function renderDashboardCards(latestRow, sessionObj, isHistoricalSession) {
+      if (!latestRow) return;
+
+      const state = isHistoricalSession && sessionObj ? sessionObj.final_state : latestRow.gcode_state;
+      const lastEpoch = isHistoricalSession && sessionObj ? sessionObj.end_epoch : latestRow.unix_epoch;
+
+      updateStatusBadge(state, lastEpoch, isHistoricalSession);
+
+      document.getElementById("last-updated").textContent =
+        `SN: ${latestRow.device_sn} • Last Sync: ${latestRow.timestamp} (${latestRow.trigger})`;
+
+      const activeSubtask = sessionObj?.subtask_name || latestRow.subtask_name;
+      document.getElementById("subtask-name").textContent =
+        activeSubtask && activeSubtask !== "NONE" ? activeSubtask : "No active print job";
+
+      document.getElementById("active-session-id").textContent =
+        sessionObj?.session_id ? sessionObj.session_id : "IDLE";
+
+      // START, END, TOTAL, REMAINING formatting
+      const startTs = sessionObj?.start_timestamp || latestRow.timestamp;
+      const startHHMMSS = extractHHMMSS(startTs);
+      const startEpoch = sessionObj?.start_epoch || latestRow.unix_epoch;
+      const endEpoch = sessionObj?.end_epoch || latestRow.unix_epoch;
+      const isFinishedOrFailed = (state === "FINISH" || state === "FAILED");
+
+      document.getElementById("task-start-time").textContent = startHHMMSS;
+      document.getElementById("log-start-time").textContent = `START: ${startHHMMSS}`;
+
+      document.getElementById("task-end-time").textContent = isFinishedOrFailed
+        ? extractHHMMSS(sessionObj?.end_timestamp || latestRow.timestamp)
+        : "--:--:--";
+
+      // TOTAL: elapsed time from session start up to the latest received update
+      const elapsedSeconds = Math.max(0, Number(endEpoch) - Number(startEpoch));
+      document.getElementById("task-total-time").textContent = formatSecondsToHHMMSS(elapsedSeconds);
+
+      // REMAINING: HH:MM (00:00 if completed/failed)
+      const remMins = isFinishedOrFailed ? 0 : (latestRow.mc_remaining_time ?? 0);
+      document.getElementById("task-remaining-time").textContent = formatMinutesToHHMM(remMins);
+
+      const pct = isHistoricalSession && sessionObj && state === "FINISH"
+        ? 100
+        : (latestRow.mc_percent ?? sessionObj?.final_percent ?? 0);
+
+      document.getElementById("progress-bar").style.width = pct + "%";
+      document.getElementById("progress-pct-inline").textContent = pct + "%";
+      document.getElementById("percent-val").textContent = pct + "%";
+
+      const curLayer = latestRow.layer_num ?? sessionObj?.max_layer ?? 0;
+      const totLayer = latestRow.total_layer_num ?? sessionObj?.total_layers ?? 0;
+      document.getElementById("layer-val").textContent = `Layer ${curLayer} / ${totLayer}`;
+
+      document.getElementById("nozzle-val").textContent = `${Number(latestRow.nozzle_temper ?? 0).toFixed(1)}°C`;
+      document.getElementById("nozzle-target").textContent = `Target: ${Number(latestRow.nozzle_target_temper ?? 0).toFixed(0)}°C`;
+
+      document.getElementById("bed-val").textContent = `${Number(latestRow.bed_temper ?? 0).toFixed(1)}°C`;
+      document.getElementById("bed-target").textContent = `Target: ${Number(latestRow.bed_target_temper ?? 0).toFixed(0)}°C`;
+
+      document.getElementById("speed-val").textContent = `${latestRow.spd_mag ?? 100}%`;
+      const fanPct = Math.round(((latestRow.fan_gear ?? 0) / 255) * 100);
+      document.getElementById("wifi-val").textContent = `Fan: ${fanPct}% • Wi-Fi: ${latestRow.wifi_signal ?? "--"}`;
+    }
+
+    // Render Chart (Downsampled safely for 72h+ prints) & Table (with Frozen Timestamp Column)
+    function renderTableAndChart(rows) {
+      const tbody = document.getElementById("log-table-body");
+      tbody.innerHTML = "";
+
+      const displayLimit = showAllTableRows ? rows.length : Math.min(rows.length, 250);
+      const loadAllBtn = document.getElementById("btn-load-all");
+      if (rows.length > 250 && !showAllTableRows) {
+        loadAllBtn.style.display = "inline-block";
+        loadAllBtn.textContent = `Show All ${rows.length.toLocaleString()} Events`;
+      } else {
+        loadAllBtn.style.display = "none";
+      }
+
+      document.getElementById("table-title").textContent =
+        `Print Event Log (Scrollable) • ${displayLimit.toLocaleString()} of ${rows.length.toLocaleString()} rows`;
+
+      const fragment = document.createDocumentFragment();
+      for (let i = 0; i < displayLimit; i++) {
+        const r = rows[i];
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td class="sticky-col">${r.timestamp}</td>
           <td><span class="pill">${r.trigger}</span></td>
           <td><b>${r.gcode_state}</b></td>
           <td>${r.layer_num}/${r.total_layer_num}</td>
@@ -486,267 +820,181 @@
           <td>${Number(r.nozzle_temper).toFixed(1)}°C</td>
           <td>${Number(r.bed_temper).toFixed(1)}°C</td>
           <td>${r.print_error === 0 ? "OK" : r.print_error}</td>
-        </tr>`;
+        `;
+        fragment.appendChild(tr);
       }
-      tbody.innerHTML = htmlChunks.join("");
-    }
+      tbody.appendChild(fragment);
 
-    function renderChart(rows, preserveZoom = false) {
+      // Chronological order for chart, downsampled to <= 400 points so multi-day prints render smoothly
       const chronological = [...rows].reverse();
-      // Keep up to 600 points so zooming in on long prints preserves sharp detail
-      const maxChartPoints = 600;
-      const step = chronological.length > maxChartPoints ? Math.ceil(chronological.length / maxChartPoints) : 1;
-      chartChronologicalRows = chronological.filter((_, idx) => idx % step === 0);
+      const maxPoints = 400;
+      const step = chronological.length > maxPoints ? Math.ceil(chronological.length / maxPoints) : 1;
+      const sampled = chronological.filter((_, idx) => idx % step === 0 || idx === chronological.length - 1);
 
-      tempChart.data.labels = chartChronologicalRows.map(r => r.timestamp.split(" ")[1] || r.timestamp);
-      tempChart.data.datasets[0].data = chartChronologicalRows.map(r => r.nozzle_temper);
-      tempChart.data.datasets[1].data = chartChronologicalRows.map(r => r.bed_temper);
-
-      if (!preserveZoom) {
-        tempChart.resetZoom("none");
-      }
+      tempChart.data.labels = sampled.map(r => extractHHMMSS(r.timestamp));
+      tempChart.data.datasets[0].data = sampled.map(r => r.nozzle_temper);
+      tempChart.data.datasets[1].data = sampled.map(r => r.bed_temper);
       tempChart.update("none");
     }
 
-    // Apply X-axis time window preset (All, 6h, 1h, 15m)
-    function applyXWindow(secondsWindow) {
-      if (chartChronologicalRows.length === 0) return;
+    document.getElementById("btn-load-all").addEventListener("click", () => {
+      showAllTableRows = true;
+      renderTableAndChart(currentRows);
+    });
 
-      if (secondsWindow === "all") {
-        delete tempChart.options.scales.x.min;
-        delete tempChart.options.scales.x.max;
-        tempChart.resetZoom("none");
-        tempChart.update("none");
-        return;
-      }
+    // Populate Dropdown Directly from print_sessions Table
+    async function loadSessionsDropdown() {
+      const { data, error } = await db
+        .from("print_sessions")
+        .select("*")
+        .order("start_epoch", { ascending: false });
 
-      const span = Number(secondsWindow);
-      const latestEpoch = chartChronologicalRows[chartChronologicalRows.length - 1].unix_epoch;
-      const cutoffEpoch = latestEpoch - span;
+      if (error || !data) return;
+      sessionsCache = data;
 
-      let startIndex = chartChronologicalRows.findIndex(r => r.unix_epoch >= cutoffEpoch);
-      if (startIndex < 0) startIndex = 0;
-
-      tempChart.options.scales.x.min = startIndex;
-      tempChart.options.scales.x.max = chartChronologicalRows.length - 1;
-      tempChart.update("none");
-    }
-
-    // Apply Y-axis temperature range preset (Auto, 0-300, Nozzle, Bed)
-    function applyYRange(minVal, maxVal) {
-      if (minVal === "auto" || maxVal === "auto") {
-        delete tempChart.options.scales.y.min;
-        delete tempChart.options.scales.y.max;
-      } else {
-        tempChart.options.scales.y.min = Number(minVal);
-        tempChart.options.scales.y.max = Number(maxVal);
-      }
-      tempChart.update("none");
-    }
-
-    async function populateJobDropdown(latestSubtask) {
-      const jobMap = new Map();
-      let beforeEpoch = Math.floor(Date.now() / 1000) + 86400;
-
-      for (let step = 0; step < 100; step++) {
-        const { data: latestRowData, error: latestErr } = await db
-          .from("printer_logs")
-          .select("subtask_name, gcode_state, timestamp, unix_epoch")
-          .neq("subtask_name", "NONE")
-          .lt("unix_epoch", beforeEpoch)
-          .order("unix_epoch", { ascending: false })
-          .limit(1);
-
-        if (latestErr || !latestRowData || latestRowData.length === 0) break;
-
-        const job = latestRowData[0];
-        if (!jobMap.has(job.subtask_name)) {
-          jobMap.set(job.subtask_name, {
-            name: job.subtask_name,
-            lastState: job.gcode_state,
-            lastTime: job.timestamp
-          });
-        }
-
-        const { data: firstRowData, error: firstErr } = await db
-          .from("printer_logs")
-          .select("unix_epoch")
-          .eq("subtask_name", job.subtask_name)
-          .lt("unix_epoch", beforeEpoch)
-          .order("unix_epoch", { ascending: true })
-          .limit(1);
-
-        if (firstErr || !firstRowData || firstRowData.length === 0) break;
-        const earliestEpochForThisJob = firstRowData[0].unix_epoch;
-
-        if (earliestEpochForThisJob >= beforeEpoch) break;
-        beforeEpoch = earliestEpochForThisJob;
-      }
-
-      const selector = document.getElementById("job-selector");
-      const previousSelection = selector.value;
+      const selector = document.getElementById("session-selector");
+      const prevVal = selector.value || "__LIVE__";
       selector.innerHTML = "";
 
+      // Top option: LIVE
+      const latestSession = sessionsCache[0];
       const liveOpt = document.createElement("option");
       liveOpt.value = "__LIVE__";
-      liveOpt.textContent = `LIVE: ${latestSubtask && latestSubtask !== "NONE" ? latestSubtask : "Current Printer Status"}`;
+      if (latestSession && (latestSession.final_state === "RUNNING" || latestSession.final_state === "PREPARE" || latestSession.final_state === "PAUSE")) {
+        liveOpt.textContent = `LIVE: ${latestSession.subtask_name}`;
+      } else {
+        liveOpt.textContent = "LIVE";
+      }
       selector.appendChild(liveOpt);
 
-      jobMap.forEach((info, name) => {
+      // Session options: [session_id] subtask_name (+ [Failed] only if FAILED)
+      sessionsCache.forEach(s => {
         const opt = document.createElement("option");
-        opt.value = name;
-        const dateTag = info.lastTime ? info.lastTime.split(" ")[0] : "";
-        opt.textContent = `${name} [${info.lastState} • ${dateTag}]`;
+        opt.value = s.session_id;
+        const failSuffix = s.final_state === "FAILED" ? " [Failed]" : "";
+        opt.textContent = `[${s.session_id}] ${s.subtask_name}${failSuffix}`;
         selector.appendChild(opt);
       });
 
-      if ([...selector.options].some(o => o.value === previousSelection)) {
-        selector.value = previousSelection;
+      if ([...selector.options].some(o => o.value === prevVal)) {
+        selector.value = prevVal;
       }
     }
 
-    async function loadJobLogs(targetSubtask, isHistorical) {
-      renderAllTableRows = false;
-      document.getElementById("event-count-label").textContent = "Loading full print history...";
+    // Fetch All Logs for a Specific Session Window (Paginated in 1,000-row chunks)
+    async function fetchLogsForSession(sessionObj) {
+      let allRows = [];
+      let beforeEpoch = Number(sessionObj.end_epoch) + 1;
+      const minEpoch = Number(sessionObj.start_epoch);
 
-      let allFetched = [];
-      const pageSize = 1000;
-      const maxPages = 100;
-
-      for (let page = 0; page < maxPages; page++) {
-        const from = page * pageSize;
-        const to = from + pageSize - 1;
-
-        let query = db
+      for (let page = 0; page < 100; page++) {
+        const { data, error } = await db
           .from("printer_logs")
           .select("*")
+          .eq("subtask_name", sessionObj.subtask_name)
+          .gte("unix_epoch", minEpoch)
+          .lt("unix_epoch", beforeEpoch)
           .order("unix_epoch", { ascending: false })
-          .range(from, to);
+          .order("id", { ascending: false })
+          .limit(1000);
 
-        if (targetSubtask && targetSubtask !== "NONE") {
-          query = query.eq("subtask_name", targetSubtask);
-        }
+        if (error || !data || data.length === 0) break;
+        allRows = allRows.concat(data);
 
-        const { data, error } = await query;
-        if (error) {
-          document.getElementById("last-updated").textContent = "Error loading data: " + error.message;
-          break;
-        }
-
-        if (!data || data.length === 0) break;
-        allFetched = allFetched.concat(data);
-
-        if (page === 0) {
-          renderLatestCard(allFetched[0], isHistorical);
-          renderTable(allFetched);
-          renderChart(allFetched, false);
-        }
-
-        if (data.length < pageSize) break;
+        if (data.length < 1000) break;
+        const oldest = data[data.length - 1];
+        if (!oldest || oldest.unix_epoch >= beforeEpoch) break;
+        beforeEpoch = oldest.unix_epoch;
       }
+      return allRows;
+    }
 
-      if (allFetched.length > 0) {
-        currentRows = allFetched;
-        renderLatestCard(currentRows[0], isHistorical);
-        renderTable(currentRows);
-        renderChart(currentRows, false);
+    // Switch View Between LIVE Mode and Any Historical Session
+    async function refreshActiveView() {
+      showAllTableRows = false;
+      tempChart.resetZoom();
+
+      if (selectedMode === "__LIVE__") {
+        const activeSession = sessionsCache[0] || null;
+        if (activeSession && (activeSession.final_state === "RUNNING" || activeSession.final_state === "PREPARE" || activeSession.final_state === "PAUSE")) {
+          currentRows = await fetchLogsForSession(activeSession);
+        } else {
+          const { data } = await db
+            .from("printer_logs")
+            .select("*")
+            .order("unix_epoch", { ascending: false })
+            .order("id", { ascending: false })
+            .limit(200);
+          currentRows = data || [];
+        }
+
+        if (currentRows.length > 0) {
+          latestLiveRow = currentRows[0];
+          const matchedSession = sessionsCache.find(s => s.subtask_name === latestLiveRow.subtask_name) || activeSession;
+          renderDashboardCards(latestLiveRow, matchedSession, false);
+          renderTableAndChart(currentRows);
+        }
+      } else {
+        const sessionObj = sessionsCache.find(s => s.session_id === selectedMode);
+        if (!sessionObj) return;
+        currentRows = await fetchLogsForSession(sessionObj);
+        const topRow = currentRows[0] || {
+          device_sn: "03919D570309175",
+          timestamp: sessionObj.end_timestamp,
+          unix_epoch: sessionObj.end_epoch,
+          trigger: "SESSION",
+          gcode_state: sessionObj.final_state,
+          subtask_name: sessionObj.subtask_name,
+          layer_num: sessionObj.max_layer,
+          total_layer_num: sessionObj.total_layers,
+          mc_percent: sessionObj.final_percent,
+          mc_remaining_time: 0
+        };
+        renderDashboardCards(topRow, sessionObj, true);
+        renderTableAndChart(currentRows);
       }
     }
 
-    async function initializeDashboard() {
-      const { data: latestData, error } = await db
-        .from("printer_logs")
-        .select("*")
-        .order("unix_epoch", { ascending: false })
-        .limit(1);
+    document.getElementById("session-selector").addEventListener("change", async (e) => {
+      selectedMode = e.target.value;
+      await refreshActiveView();
+    });
 
-      if (error) {
-        document.getElementById("last-updated").textContent = "Error connecting: " + error.message;
-        return;
+    // Periodic Heartbeat Check (Every 10s) to Detect ESP32 Offline Immediately
+    setInterval(() => {
+      if (selectedMode === "__LIVE__" && latestLiveRow) {
+        updateStatusBadge(latestLiveRow.gcode_state, latestLiveRow.unix_epoch, false);
       }
+    }, 10000);
 
-      if (latestData && latestData.length > 0) {
-        activeJobName = latestData[0].subtask_name;
-        await populateJobDropdown(activeJobName);
-        await loadJobLogs(activeJobName, false);
-      } else {
-        document.getElementById("last-updated").textContent = "Connected to Supabase • Waiting for first ESP32 log...";
-      }
-    }
-
-    // X-Time Scale Preset Buttons
-    document.querySelectorAll(".x-btn").forEach(btn => {
-      btn.addEventListener("click", () => {
-        document.querySelectorAll(".x-btn").forEach(b => b.classList.remove("active"));
-        btn.classList.add("active");
-        applyXWindow(btn.dataset.xrange);
-      });
-    });
-
-    // Y-Temp Scale Preset Buttons
-    document.querySelectorAll(".y-btn").forEach(btn => {
-      btn.addEventListener("click", () => {
-        document.querySelectorAll(".y-btn").forEach(b => b.classList.remove("active"));
-        btn.classList.add("active");
-        applyYRange(btn.dataset.ymin, btn.dataset.ymax);
-      });
-    });
-
-    // Reset Zoom & Pan Button
-    document.getElementById("reset-zoom-btn").addEventListener("click", () => {
-      document.querySelectorAll(".x-btn").forEach(b => b.classList.remove("active"));
-      document.querySelector('.x-btn[data-xrange="all"]').classList.add("active");
-      document.querySelectorAll(".y-btn").forEach(b => b.classList.remove("active"));
-      document.querySelector('.y-btn[data-ymin="auto"]').classList.add("active");
-
-      delete tempChart.options.scales.x.min;
-      delete tempChart.options.scales.x.max;
-      delete tempChart.options.scales.y.min;
-      delete tempChart.options.scales.y.max;
-      tempChart.resetZoom("none");
-      tempChart.update("none");
-    });
-
-    document.getElementById("show-all-btn").addEventListener("click", () => {
-      renderAllTableRows = true;
-      renderTable(currentRows);
-    });
-
-    document.getElementById("job-selector").addEventListener("change", async (e) => {
-      selectedJobName = e.target.value;
-      if (selectedJobName === "__LIVE__") {
-        await loadJobLogs(activeJobName, false);
-      } else {
-        await loadJobLogs(selectedJobName, true);
-      }
-    });
-
-    // Subscribe to live INSERT events from ESP32
-    db.channel("printer-live")
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "printer_logs" }, async (payload) => {
+    // Realtime Subscriptions: Live Telemetry & Session Updates
+    db.channel("bambu-monitor-realtime")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "printer_logs" }, payload => {
         const newRow = payload.new;
+        latestLiveRow = newRow;
 
-        if (newRow.subtask_name && newRow.subtask_name !== activeJobName) {
-          activeJobName = newRow.subtask_name;
-          await populateJobDropdown(activeJobName);
-          if (selectedJobName === "__LIVE__") {
-            await loadJobLogs(activeJobName, false);
-            return;
+        if (selectedMode === "__LIVE__") {
+          const activeSession = sessionsCache[0] || null;
+          if (currentRows.length > 0 && currentRows[0].subtask_name !== newRow.subtask_name) {
+            currentRows = [newRow];
+          } else {
+            currentRows.unshift(newRow);
           }
+          const matchedSession = sessionsCache.find(s => s.subtask_name === newRow.subtask_name) || activeSession;
+          renderDashboardCards(newRow, matchedSession, false);
+          renderTableAndChart(currentRows);
         }
-
-        if (selectedJobName === "__LIVE__" || selectedJobName === newRow.subtask_name) {
-          currentRows.unshift(newRow);
-          renderLatestCard(newRow, selectedJobName !== "__LIVE__");
-          renderTable(currentRows);
-          // Preserve user's current zoom/pan position during live updates
-          const isZoomed = tempChart.isZoomedOrPanned && tempChart.isZoomedOrPanned();
-          renderChart(currentRows, isZoomed);
-        }
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "print_sessions" }, async () => {
+        await loadSessionsDropdown();
       })
       .subscribe();
 
-    initializeDashboard();
+    // Initial Boot Sequence
+    (async function init() {
+      await loadSessionsDropdown();
+      await refreshActiveView();
+    })();
   </script>
 </body>
 </html>
