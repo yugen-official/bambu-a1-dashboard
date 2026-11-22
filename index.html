@@ -601,15 +601,13 @@
       return `${hrs}h ${remMins}m ago`;
     }
 
-    // Create Custom 3D Printer Nozzle Icon for Chart Legend & Tooltip
+    // Custom 3D Printer Nozzle Icon Used Exclusively in Top Legend Toggle
     function createNozzleLegendIcon(color = "#ff5252") {
       const c = document.createElement("canvas");
       c.width = 20;
       c.height = 20;
       const g = c.getContext("2d");
       g.fillStyle = color;
-      g.strokeStyle = "#ffffff";
-      g.lineWidth = 1;
 
       // Upper heater block / hex body
       g.beginPath();
@@ -638,9 +636,9 @@
       return c;
     }
 
-    const nozzleIconCanvas = createNozzleLegendIcon("#ff5252");
+    const nozzleLegendIcon = createNozzleLegendIcon("#ff5252");
 
-    // Vertical Dotted Crosshair Line Plugin (Restored for Point Inspection)
+    // Vertical Dotted Crosshair Line Plugin
     const verticalCrosshairPlugin = {
       id: "verticalCrosshair",
       afterDatasetsDraw(chart) {
@@ -663,7 +661,7 @@
       }
     };
 
-    // Initialize Chart with Vertical Dotted Crosshair, Square Tooltip Box, Nozzle Icon & Trackpad Pan/Zoom
+    // Initialize Chart: Clean Red & Blue Circular Dots on Lines + Nozzle Icon & Blue Rect in Top Legend
     const canvasEl = document.getElementById("tempChart");
     const ctx = canvasEl.getContext("2d");
     const tempChart = new Chart(ctx, {
@@ -675,29 +673,31 @@
             label: "Nozzle (°C)",
             data: [],
             borderColor: "#ff5252",
-            backgroundColor: "rgba(255, 82, 82, 0.1)",
+            backgroundColor: "#ff5252",
             tension: 0.25,
             borderWidth: 2,
-            pointRadius: 1.5,
+            pointRadius: 2,
             pointHoverRadius: 5,
+            pointBackgroundColor: "#ff5252",
             pointHoverBackgroundColor: "#ff5252",
             pointHoverBorderColor: "#ffffff",
             pointHoverBorderWidth: 1.5,
-            pointStyle: nozzleIconCanvas
+            pointStyle: "circle"
           },
           {
             label: "Bed (°C)",
             data: [],
             borderColor: "#29b6f6",
-            backgroundColor: "rgba(41, 182, 246, 0.1)",
+            backgroundColor: "#29b6f6",
             tension: 0.25,
             borderWidth: 2,
-            pointRadius: 1.5,
+            pointRadius: 2,
             pointHoverRadius: 5,
+            pointBackgroundColor: "#29b6f6",
             pointHoverBackgroundColor: "#29b6f6",
             pointHoverBorderColor: "#ffffff",
             pointHoverBorderWidth: 1.5,
-            pointStyle: "rectRounded"
+            pointStyle: "circle"
           }
         ]
       },
@@ -725,7 +725,18 @@
             labels: {
               color: "#e6edf3",
               usePointStyle: true,
-              padding: 16
+              padding: 16,
+              generateLabels(chart) {
+                const defaultLabels = Chart.defaults.plugins.legend.labels.generateLabels(chart);
+                return defaultLabels.map((item) => {
+                  if (item.datasetIndex === 0) {
+                    item.pointStyle = nozzleLegendIcon;
+                  } else if (item.datasetIndex === 1) {
+                    item.pointStyle = "rect";
+                  }
+                  return item;
+                });
+              }
             }
           },
           tooltip: {
@@ -737,7 +748,7 @@
             bodyColor: "#e6edf3",
             borderColor: "#8b949e",
             borderWidth: 1,
-            cornerRadius: 4, // Square dialogue box style
+            cornerRadius: 4,
             padding: 10,
             displayColors: true,
             usePointStyle: true,
